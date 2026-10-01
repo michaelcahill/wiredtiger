@@ -912,6 +912,7 @@ cuberoot
 curbackup
 curbt
 curbulk
+curcache
 curconfig
 curdump
 curfile

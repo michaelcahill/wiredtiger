@@ -209,6 +209,8 @@ struct __wt_cursor_btree;
 typedef struct __wt_cursor_btree WT_CURSOR_BTREE;
 struct __wt_cursor_bulk;
 typedef struct __wt_cursor_bulk WT_CURSOR_BULK;
+struct __wt_cursor_cache;
+typedef struct __wt_cursor_cache WT_CURSOR_CACHE;
 struct __wt_cursor_config;
 typedef struct __wt_cursor_config WT_CURSOR_CONFIG;
 struct __wt_cursor_data_source;

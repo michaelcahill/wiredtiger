@@ -108,6 +108,7 @@ src/conn/conn_sweep.c
 src/cursor/cur_backup.c
 src/cursor/cur_backup_incr.c
 src/cursor/cur_bulk.c
+src/cursor/cur_cache.c
 src/cursor/cur_config.c
 src/cursor/cur_ds.c
 src/cursor/cur_dump.c
