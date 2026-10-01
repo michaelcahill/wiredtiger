@@ -2167,12 +2167,16 @@ struct __wt_connection {
      * written.  The directory must already exist.  If the value is not an absolute path\, the path
      * is relative to the database home (see @ref absolute_path for more information)., a string;
      * default \c ".".}
-     * @config{&nbsp;&nbsp;&nbsp;&nbsp;timestamp, a timestamp prepended to each log
-     * record.  May contain \c strftime conversion specifications.  When \c json is configured\,
-     * defaults to \c "%Y-%m-%dT%H:%M:%S.000Z"., a string; default \c "%b %d %H:%M:%S".}
-     * @config{&nbsp;&nbsp;&nbsp;&nbsp;wait, seconds to wait between each write of the cache log;
-     * setting this value above 0 configures cache logging., an integer between \c 0 and \c 100000;
-     * default \c 0.}
+     * @config{&nbsp;&nbsp;&nbsp;&nbsp;sample, number of pages to sample per file
+     * when dumping the cache state; a value of 0 logs every page., an integer greater than or equal
+     * to \c 0; default \c 10000.}
+     * @config{&nbsp;&nbsp;&nbsp;&nbsp;timestamp, a timestamp prepended
+     * to each log record.  May contain \c strftime conversion specifications.  When \c json is
+     * configured\, defaults to \c "%Y-%m-%dT%H:%M:%S.000Z"., a string; default \c "%b %d
+     * %H:%M:%S".}
+     * @config{&nbsp;&nbsp;&nbsp;&nbsp;wait, seconds to wait between each write of the
+     * cache log; setting this value above 0 configures cache logging., an integer between \c 0 and
+     * \c 100000; default \c 0.}
      * @config{ ),,}
      * @config{cache_max_wait_ms, the maximum number of milliseconds an application thread will wait
      * for space to be available in cache before giving up.  Default or 0 will wait forever.
@@ -3103,12 +3107,14 @@ struct __wt_connection {
  * If the value is not an absolute path\, the path is relative to the database home (see @ref
  * absolute_path for more information)., a string; default \c ".".}
  * @config{&nbsp;&nbsp;&nbsp;&nbsp;
- * timestamp, a timestamp prepended to each log record.  May contain \c strftime conversion
- * specifications.  When \c json is configured\, defaults to \c "%Y-%m-%dT%H:%M:%S.000Z"., a string;
- * default \c "%b %d %H:%M:%S".}
- * @config{&nbsp;&nbsp;&nbsp;&nbsp;wait, seconds to wait between each
- * write of the cache log; setting this value above 0 configures cache logging., an integer between
- * \c 0 and \c 100000; default \c 0.}
+ * sample, number of pages to sample per file when dumping the cache state; a value of 0 logs every
+ * page., an integer greater than or equal to \c 0; default \c 10000.}
+ * @config{&nbsp;&nbsp;&nbsp;&nbsp;timestamp, a timestamp prepended to each log record.  May contain
+ * \c strftime conversion specifications.  When \c json is configured\, defaults to \c
+ * "%Y-%m-%dT%H:%M:%S.000Z"., a string; default \c "%b %d %H:%M:%S".}
+ * @config{&nbsp;&nbsp;&nbsp;&nbsp;wait, seconds to wait between each write of the cache log;
+ * setting this value above 0 configures cache logging., an integer between \c 0 and \c 100000;
+ * default \c 0.}
  * @config{ ),,}
  * @config{cache_max_wait_ms, the maximum number of milliseconds an application thread will wait for
  * space to be available in cache before giving up.  Default or 0 will wait forever.  Individual

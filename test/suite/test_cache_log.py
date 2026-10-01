@@ -31,6 +31,7 @@
 # [END_TAGS]
 #
 
+import json
 import os
 import re
 import time
@@ -495,6 +496,83 @@ class test_cache_log_content(wttest.WiredTigerTestCase):
             self.assertGreaterEqual(bytes_in_cache, 0)
             self.assertGreaterEqual(dirty_bytes, 0)
             self.assertGreaterEqual(update_bytes, 0)
+
+    def wait_for_log_file(self, timeout=10):
+        """Wait until a WiredTigerCache file appears in the home directory."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if find_cache_log_file('.') is not None:
+                return
+            time.sleep(0.5)
+        self.fail('Timed out waiting for cache log file')
+
+
+# Test cache_log page sampling.
+class test_cache_log_sample(wttest.WiredTigerTestCase):
+    """
+    Test the cache_log sample configuration option: a per-file dump returns at most that many
+    pages, and sample=0 logs every page.
+    """
+    test_name = __qualname__
+
+    def setUp(self):
+        super().setUp()
+        # Populate enough pages that a small sample is a strict subset of the file's resident
+        # pages; the data fits comfortably in the cache, so residency is not a factor.
+        ds = SimpleDataSet(self, f'table:{self.test_name}', 100000)
+        ds.populate()
+        self.session.checkpoint(None)
+
+    def _log_pages_for_table(self):
+        log_file = find_cache_log_file('.')
+        self.assertIsNotNone(log_file)
+
+        with open(log_file, 'r') as f:
+            data = json.loads(f.read())
+        cache_data = data['wiredTigerCache']
+
+        keys = [k for k in cache_data if self.test_name in k]
+        self.assertEqual(len(keys), 1,
+                         f'Expected exactly one entry for the table, got: {list(cache_data)}')
+        return cache_data[keys[0]]
+
+    def test_cache_log_sample_limits_pages(self):
+        """
+        Test that sample=N limits a per-file dump to at most N pages.
+        """
+        sample = 10
+        self.conn.reconfigure(f'cache_log=(wait=1,json=true,sample={sample})')
+        self.wait_for_log_file(5)
+        self.conn.reconfigure('cache_log=(wait=0)')
+
+        pages = self._log_pages_for_table()
+        self.assertGreater(len(pages), 0, 'Sampled dump should return some pages')
+        self.assertLessEqual(len(pages), sample,
+                             f'Sampled dump should return at most {sample} pages')
+
+    def test_cache_log_sample_zero_logs_all(self):
+        """
+        Test that sample=0 logs every resident page, not just a sample.
+        """
+        self.conn.reconfigure('cache_log=(wait=1,json=true,sample=0)')
+        self.wait_for_log_file(5)
+        self.conn.reconfigure('cache_log=(wait=0)')
+
+        pages = self._log_pages_for_table()
+        self.assertGreater(len(pages), 10,
+                           'An unsampled dump should return far more than a small sample')
+
+    def test_cache_log_default_sample(self):
+        """
+        Test that the default sample of 10000 pages leaves a small file unsampled.
+        """
+        self.conn.reconfigure('cache_log=(wait=1,json=true)')
+        self.wait_for_log_file(5)
+        self.conn.reconfigure('cache_log=(wait=0)')
+
+        pages = self._log_pages_for_table()
+        self.assertGreater(len(pages), 10,
+                           'A file with few pages should be fully logged under the default sample')
 
     def wait_for_log_file(self, timeout=10):
         """Wait until a WiredTigerCache file appears in the home directory."""

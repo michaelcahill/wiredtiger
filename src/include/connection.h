@@ -746,6 +746,7 @@ struct __wt_conn_cache_log {
     bool json_tables;
     char *path;        /* Cache log path format */
     const char *stamp; /* Cache log entry timestamp */
+    uint64_t sample;   /* Cache log pages sampled per file */
     uint64_t usecs;    /* Cache log period */
 };
 

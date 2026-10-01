@@ -88,6 +88,9 @@ __cachelog_config(WT_SESSION_IMPL *session, const char **cfg, bool *runp)
     if (cval.val != 0)
         FLD_SET(conn->cache_log_flags, WT_CACHELOG_ON_CLOSE);
 
+    WT_RET(__wt_config_gets(session, cfg, "cache_log.sample", &cval));
+    conn->cache_log.sample = (uint64_t)cval.val;
+
     /*
      * See above for the details: during reconfiguration we're loading the path value from the saved
      * configuration information, and it's required during reconfiguration because we potentially
@@ -225,22 +228,31 @@ __cachelog_dump(WT_SESSION_IMPL *session, const char *name)
 {
     WT_CONNECTION_IMPL *conn;
     WT_CURSOR *cursor;
-    WT_DECL_ITEM(tmp);
+    WT_DECL_ITEM(cfg_str);
+    WT_DECL_ITEM(uri_buf);
     WT_DECL_RET;
     uint64_t cache_bytes, dirty_bytes, dirty, page_size, page_type, pin_reason, update_bytes,
       read_gen;
     bool first;
-    const char *cfg[] = {WT_CONFIG_BASE(session, WT_SESSION_open_cursor), NULL};
+    const char *cfg[3] = {WT_CONFIG_BASE(session, WT_SESSION_open_cursor), NULL, NULL};
     const char *uri;
 
     conn = S2C(session);
     cursor = NULL;
 
-    WT_ERR(__wt_scr_alloc(session, 0, &tmp));
+    WT_ERR(__wt_scr_alloc(session, 0, &uri_buf));
 
     /* Build URI and configuration string. */
-    WT_ERR(__wt_buf_fmt(session, tmp, "cache:file:%s", name));
-    uri = tmp->data;
+    WT_ERR(__wt_buf_fmt(session, uri_buf, "cache:file:%s", name));
+    uri = uri_buf->data;
+
+    /* Limit the walk to a sample of the file's pages when configured. */
+    if (conn->cache_log.sample != 0) {
+        WT_ERR(__wt_scr_alloc(session, 0, &cfg_str));
+        WT_ERR(__wt_buf_fmt(
+          session, cfg_str, "next_random_sample_size=%" PRIu64, conn->cache_log.sample));
+        cfg[1] = cfg_str->data;
+    }
 
     /*
      * Open the cache cursor and dump the cache state.
@@ -283,7 +295,8 @@ __cachelog_dump(WT_SESSION_IMPL *session, const char *name)
         WT_ERR(__wt_fprintf(session, conn->cache_log.fs, "]"));
 
 err:
-    __wt_scr_free(session, &tmp);
+    __wt_scr_free(session, &cfg_str);
+    __wt_scr_free(session, &uri_buf);
     if (cursor != NULL)
         WT_TRET(cursor->close(cursor));
     return (ret);

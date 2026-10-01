@@ -1271,6 +1271,10 @@ cache_log_configuration_common = [
         type='boolean'),
     Config('on_close', 'false', r'''log the cache state on database close''',
         type='boolean'),
+    Config('sample', '10000', r'''
+        number of pages to sample per file when dumping the cache state; a value of 0
+        logs every page''',
+        min='0'),
     Config('timestamp', '"%b %d %H:%M:%S"', r'''
         a timestamp prepended to each log record. May contain \c strftime conversion specifications.
         When \c json is configured, defaults to \c "%Y-%m-%dT%H:%M:%S.000Z"'''),
