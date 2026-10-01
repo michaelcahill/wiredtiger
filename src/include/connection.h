@@ -730,6 +730,26 @@ struct __wt_conn_stat_log {
 };
 
 /*
+ * WT_CONN_CACHE_LOG --
+ *	Cache logging subsystem fields, grouping the session, thread, and
+ *	configuration that drive the cache log server.
+ */
+struct __wt_conn_cache_log {
+#define WT_CACHELOG_FILENAME "WiredTigerCache.%d.%H"
+    WT_SESSION_IMPL *session; /* Cache log session */
+    wt_thread_t tid;          /* Cache log thread */
+    bool tid_set;             /* Cache log thread set */
+    WT_CONDVAR *cond;         /* Cache log wait mutex */
+    const char *format;       /* Cache log timestamp format */
+    WT_FSTREAM *fs;           /* Cache log stream */
+    /* Cache log json table printing state flag */
+    bool json_tables;
+    char *path;        /* Cache log path format */
+    const char *stamp; /* Cache log entry timestamp */
+    uint64_t usecs;    /* Cache log period */
+};
+
+/*
  * WT_CONN_SWEEP --
  *	Handle sweep subsystem fields, grouping the session, thread, and
  *	configuration that drive the handle sweep server.
@@ -1131,7 +1151,8 @@ struct __wt_connection_impl {
      */
     wt_shared uint64_t max_write_gen;
 
-    uint32_t stat_flags; /* Options declared in flags.py */
+    uint32_t stat_flags;      /* Options declared in flags.py */
+    uint32_t cache_log_flags; /* Cache log options */
 
     /* Connection statistics */
     uint64_t rec_maximum_hs_wrapup_milliseconds; /* Maximum milliseconds moving updates to history
@@ -1171,7 +1192,8 @@ struct __wt_connection_impl {
 
     bool preserve_prepared; /* Preserve prepared updates */
 
-    WT_CONN_STAT_LOG stat_log; /* Statistics logging subsystem */
+    WT_CONN_STAT_LOG stat_log;   /* Statistics logging subsystem */
+    WT_CONN_CACHE_LOG cache_log; /* Cache logging subsystem */
 
     WT_LOG_MANAGER log_mgr;
 
@@ -1311,19 +1333,20 @@ struct __wt_connection_impl {
  * Server subsystem flags.
  */
 /* AUTOMATIC FLAG VALUE GENERATION START 0 */
-#define WT_CONN_SERVER_CAPACITY 0x0001u
-#define WT_CONN_SERVER_CHECKPOINT 0x0002u
-#define WT_CONN_SERVER_CHECKPOINT_CLEANUP 0x0004u
-#define WT_CONN_SERVER_CHECKPOINT_RECONCILE_THREADS 0x0008u
-#define WT_CONN_SERVER_COMPACT 0x0010u
-#define WT_CONN_SERVER_DISAGG_PICKUP 0x0020u
-#define WT_CONN_SERVER_EVICTION 0x0040u
-#define WT_CONN_SERVER_LAYERED 0x0080u
-#define WT_CONN_SERVER_LOG 0x0100u
-#define WT_CONN_SERVER_PREFETCH 0x0200u
-#define WT_CONN_SERVER_RTS 0x0400u
-#define WT_CONN_SERVER_STATISTICS 0x0800u
-#define WT_CONN_SERVER_SWEEP 0x1000u
+#define WT_CONN_SERVER_CACHE_LOG 0x0001u
+#define WT_CONN_SERVER_CAPACITY 0x0002u
+#define WT_CONN_SERVER_CHECKPOINT 0x0004u
+#define WT_CONN_SERVER_CHECKPOINT_CLEANUP 0x0008u
+#define WT_CONN_SERVER_CHECKPOINT_RECONCILE_THREADS 0x0010u
+#define WT_CONN_SERVER_COMPACT 0x0020u
+#define WT_CONN_SERVER_DISAGG_PICKUP 0x0040u
+#define WT_CONN_SERVER_EVICTION 0x0080u
+#define WT_CONN_SERVER_LAYERED 0x0100u
+#define WT_CONN_SERVER_LOG 0x0200u
+#define WT_CONN_SERVER_PREFETCH 0x0400u
+#define WT_CONN_SERVER_RTS 0x0800u
+#define WT_CONN_SERVER_STATISTICS 0x1000u
+#define WT_CONN_SERVER_SWEEP 0x2000u
     /* AUTOMATIC FLAG VALUE GENERATION STOP 32 */
     uint32_t server_flags;
 

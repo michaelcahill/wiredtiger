@@ -98,6 +98,7 @@ __wti_connection_close(WT_CONNECTION_IMPL *conn)
      */
     WT_TRET(__wt_live_restore_server_destroy(session));
     WT_TRET(__wti_background_compact_server_destroy(session));
+    WT_TRET(__wti_cachelog_destroy(session, true));
     WT_TRET(__wt_checkpoint_cleanup_destroy(session));
     WT_TRET(__wt_checkpoint_server_destroy(session));
     WT_TRET(__wti_disagg_deferred_pickup_server_destroy(session));
@@ -247,6 +248,7 @@ __wti_connection_workers(WT_SESSION_IMPL *session, const char *cfg[])
      * can know if statistics are enabled or not.
      */
     WT_RET(__wti_statlog_create(session, cfg));
+    WT_RET(__wti_cachelog_create(session, cfg));
 
     /*
      * FIXME-WT-14721: the disagg config check is a giant hack. Ideally, we'd have a single

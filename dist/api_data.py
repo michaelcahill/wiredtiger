@@ -1263,6 +1263,40 @@ wiredtiger_open_statistics_log_configuration = [
         ])
 ]
 
+# wiredtiger_open and WT_CONNECTION.reconfigure cache log configurations.
+# Dumps the state of the cache to WiredTigerCache.<timestamp>.json files using cache cursors.
+cache_log_configuration_common = [
+    Config('json', 'false', r'''
+        encode the cache log in JSON format''',
+        type='boolean'),
+    Config('on_close', 'false', r'''log the cache state on database close''',
+        type='boolean'),
+    Config('timestamp', '"%b %d %H:%M:%S"', r'''
+        a timestamp prepended to each log record. May contain \c strftime conversion specifications.
+        When \c json is configured, defaults to \c "%Y-%m-%dT%H:%M:%S.000Z"'''),
+    Config('wait', '0', r'''
+        seconds to wait between each write of the cache log; setting this value above 0
+        configures cache logging''',
+        min='0', max='100000'),
+    Config('path', '"."', r'''
+        the name of a directory into which cache log files are written. The directory
+        must already exist. If the value is not an absolute path, the path is relative to
+        the database home (see @ref absolute_path for more information)'''),
+]
+connection_reconfigure_cache_log_configuration = [
+    Config('cache_log', '', r'''
+        log the state of the cache to a file. Enabling the cache log server uses a session from
+        the configured session_max''',
+        type='category', subconfig=
+        cache_log_configuration_common)
+]
+wiredtiger_open_cache_log_configuration = [
+    Config('cache_log', '', r'''
+        log the state of the cache to a file. Enabling the cache log server uses a session from
+        the configured session_max''',
+        type='category', subconfig=cache_log_configuration_common)
+]
+
 wiredtiger_open_tiered_storage_configuration = [
     Config('tiered_storage', '', r'''
         Removed options, preserved to allow parsing old metadata''',
@@ -1377,6 +1411,7 @@ session_config = [
 
 wiredtiger_open_common =\
     connection_runtime_config +\
+    wiredtiger_open_cache_log_configuration +\
     wiredtiger_open_chunk_cache_configuration +\
     wiredtiger_open_compatibility_configuration +\
     wiredtiger_open_disaggregated_storage_configuration +\
@@ -2254,6 +2289,7 @@ methods = {
     connection_reconfigure_page_delta_configuration +\
     connection_reconfigure_log_configuration +\
     connection_reconfigure_statistics_log_configuration +\
+    connection_reconfigure_cache_log_configuration +\
     connection_runtime_config
 ),
 'WT_CONNECTION.set_file_system' : Method([]),
