@@ -1852,7 +1852,10 @@ methods = {
         to a non-zero value sets the number of samples the application expects to take
         using the \c next_random cursor. A cursor configured with both \c next_random and \c
         next_random_sample_size attempts to divide the object into \c next_random_sample_size
-        equal-sized pieces, and each retrieval returns a record from one of those pieces. See
+        equal-sized pieces, and each retrieval returns a record from one of those pieces. A
+        cache cursor opened on a single file uses \c next_random_sample_size on its own, to return
+        approximately that many of the file's pages that are in memory instead of every page;
+        \c next_random is not supported by cache cursors. See
         @ref cursor_random for details'''),
     Config('next_random_seed', '0', r'''
         configure the cursor to set an initial random seed when using \c next_random configuration.

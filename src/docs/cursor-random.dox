@@ -20,4 +20,13 @@ cursor configured using \c next_random_sample_size divides the object
 into \c next_random_sample_size pieces, and each subsequent retrieval
 returns a record from the next one of those pieces.
 
+A cache cursor opened on a single file takes \c next_random_sample_size
+by itself, without \c next_random. There the object being divided is the
+file's footprint in the cache: the cursor walks the cached pages and
+returns approximately that many of them, spread across the tree, and
+never returns more rows than the sample size. Such a cursor walks only
+pages that are already in memory, so it reads nothing from disk and
+returns fewer rows, or none at all, when the file is not cached. The \c
+next_random configuration itself is not supported by cache cursors.
+
  */

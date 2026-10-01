@@ -15,6 +15,12 @@
  *   - "cache:file:<filename>" iterates over pages in cache for a specific file, returning one row
  *     per page with a value tuple of <dirty, bytes in memory, dirty bytes, update bytes, read
  *     generation, page type, pin reason>.
+ *
+ *
+ * A page-by-page cursor also configured with next_random_sample_size walks the file's cached pages
+ * and returns approximately that many of them, spread across the tree, instead of every page. The
+ * sampled walk is cache-only: it reads nothing from disk and legitimately returns no rows for a
+ * cold file.
  */
 
 /*
@@ -355,6 +361,30 @@ err:
 }
 
 /*
+ * __curcache_pages_in_cache --
+ *     Estimate this tree's resident page count by scaling the cache's page count by the tree's
+ *     share of cache bytes. Assumes this tree's average resident page size matches the cache-wide
+ *     average; approximate by construction, and stale by the time the walk starts.
+ */
+static uint64_t
+__curcache_pages_in_cache(WT_SESSION_IMPL *session)
+{
+    WT_BTREE *btree;
+    WT_CACHE *cache;
+    uint64_t bytes, pages, total;
+
+    btree = S2BT(session);
+    cache = S2C(session)->cache;
+    bytes = __wt_atomic_load_uint64_relaxed(&btree->bytes_inmem);
+    total = __wt_atomic_load_uint64_relaxed(&cache->bytes_inmem);
+    if (bytes == 0 || total == 0)
+        return (0);
+    /* Scale in floating point: bytes * pages overflows 64 bits on a large cache. */
+    pages = __wt_cache_pages_inuse(cache);
+    return ((uint64_t)(((double)bytes / (double)total) * (double)pages));
+}
+
+/*
  * __curcache_next_page --
  *     WT_CURSOR->next method for page-by-page mode (cache:file:<filename>).
  */
@@ -364,18 +394,37 @@ __curcache_next_page(WT_CURSOR *cursor)
     WT_CURSOR_CACHE *ccache;
     WT_DECL_RET;
     WT_SESSION_IMPL *session;
+    uint64_t est;
+    uint32_t flags;
 
     ccache = (WT_CURSOR_CACHE *)cursor;
     CURSOR_API_CALL(cursor, session, ret, next, NULL);
+
+    /* An exhausted cursor stays exhausted until it is reset. */
+    if (ccache->done)
+        WT_ERR(WT_NOTFOUND);
 
     /* Initialize on demand: open the btree. */
     if (ccache->notinitialized) {
         ccache->notinitialized = false;
         ccache->done = false;
+        ccache->pages_seen = 0;
+        ccache->pages_returned = 0;
 
         WT_ERR(__wt_session_get_btree_ckpt(session, ccache->file_uri, NULL, 0, NULL, NULL));
         /* Keep the btree on the cursor; session->dhandle is not stable across calls. */
         ccache->btree = S2BT(session);
+
+        if (ccache->sample_size != 0) {
+            /* Residency moved since the last pass, so take a fresh estimate of it. */
+            est = __curcache_pages_in_cache(session);
+            ccache->stride = est == 0 ? 1 : WT_MAX(1, est / ccache->sample_size);
+            ccache->offset = __wt_random(&ccache->rnd) % ccache->stride;
+            __wt_verbose_debug1(session, WT_VERB_EVICTION,
+              "cache cursor sampling: estimate %" PRIu64 " resident pages, stride %" PRIu64
+              ", sample %" PRIu64,
+              est, ccache->stride, ccache->sample_size);
+        }
     }
 
     {
@@ -383,21 +432,43 @@ __curcache_next_page(WT_CURSOR *cursor)
 
         /*
          * Walk to the next page using tree walk. A NULL ref starts the walk at the beginning of the
-         * tree; every page, including the root, is returned exactly once (the root last), and a
-         * NULL result means the walk is finished.
+         * tree, a NULL result means the walk is finished, and every page is returned exactly once
+         * (the root last). Sampling walks the same pages and hands back one per stride, which
+         * spreads the rows over the tree instead of truncating it at its left edge.
          */
-        next_walk = ccache->walk_ref;
-        WT_WITH_BTREE(session, ccache->btree, {
-            ret = __wt_tree_walk(session, &next_walk,
-              WT_READ_INTERNAL_OP | WT_READ_VISIBLE_ALL | WT_READ_WONT_NEED | WT_READ_NO_EVICT);
-        });
-        if (ret != 0)
-            goto err;
-        if (next_walk == NULL) {
-            ccache->done = true;
-            WT_ERR(WT_NOTFOUND);
+        flags = WT_READ_INTERNAL_OP | WT_READ_VISIBLE_ALL | WT_READ_WONT_NEED | WT_READ_NO_EVICT;
+        if (ccache->sample_size != 0)
+            /* Resident pages only, so the walk reads nothing from disk. */
+            FLD_SET(flags, WT_READ_CACHE | WT_READ_NO_WAIT);
+
+        for (;;) {
+            next_walk = ccache->walk_ref;
+            WT_WITH_BTREE(session, ccache->btree, ret = __wt_tree_walk(session, &next_walk, flags));
+
+            /*
+             * A tree walk releases the reference it was handed on every return, so the cursor's
+             * hazard pointer is whatever the walk left behind: the page it returned, or nothing.
+             */
+            ccache->walk_ref = next_walk;
+            if (ret != 0)
+                goto err;
+            if (next_walk == NULL) {
+                ccache->done = true;
+                WT_ERR(WT_NOTFOUND);
+            }
+
+            if (ccache->sample_size == 0)
+                break;
+            ++ccache->pages_seen;
+            if (((ccache->pages_seen + ccache->offset) % ccache->stride) == 0)
+                break;
         }
-        ccache->walk_ref = next_walk;
+    }
+
+    /* The cap, not the estimate, decides how many rows the cursor can return. */
+    if (ccache->sample_size != 0 && ++ccache->pages_returned > ccache->sample_size) {
+        ccache->done = true;
+        WT_ERR(WT_NOTFOUND);
     }
 
     {
@@ -447,6 +518,8 @@ __curcache_reset(WT_CURSOR *cursor)
     ccache->notinitialized = true;
     ccache->dh_current = NULL;
     ccache->done = false;
+    ccache->pages_seen = 0;
+    ccache->pages_returned = 0;
     if (ccache->btree != NULL) {
         WT_WITH_BTREE(session, ccache->btree, {
             WT_TRET(__wt_page_release(session, ccache->walk_ref, 0));
@@ -515,11 +588,17 @@ int
 __wt_curcache_open(
   WT_SESSION_IMPL *session, const char *uri, const char *cfg[], WT_CURSOR **cursorp)
 {
+    WT_CONFIG_ITEM cval;
     WT_CURSOR *cursor;
     WT_CURSOR_CACHE *ccache;
     WT_DECL_RET;
 
     WT_VERIFY_OPAQUE_POINTER(WT_CURSOR_CACHE);
+
+    /* Random-record semantics don't apply to a cache cursor, only the sample size does. */
+    WT_RET(__wt_config_gets_def(session, cfg, "next_random", 0, &cval));
+    if (cval.val != 0)
+        WT_RET_MSG(session, ENOTSUP, "next_random configuration not supported by cache cursors");
 
     WT_RET(__wt_calloc_one(session, &ccache));
     cursor = (WT_CURSOR *)ccache;
@@ -603,6 +682,14 @@ __wt_curcache_open(
             WT_ERR(__wt_strdup(session, uri_buf.data, &ccache->file_uri));
             __wt_buf_free(session, &uri_buf);
         }
+        WT_ERR(__wt_config_gets_def(session, cfg, "next_random_sample_size", 0, &cval));
+        ccache->sample_size = (uint64_t)cval.val;
+        WT_ERR(__wt_config_gets_def(session, cfg, "next_random_seed", 0, &cval));
+        if (cval.val != 0)
+            __wt_random_init_seed(&ccache->rnd, (uint64_t)cval.val);
+        else
+            __wt_random_init(session, &ccache->rnd);
+
         ccache->notinitialized = true;
         ccache->btree = NULL;
         ccache->walk_ref = NULL;
