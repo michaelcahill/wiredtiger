@@ -131,7 +131,7 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
 else()
     set(asan_compiler_c_flag "-fsanitize=address -shared-libasan")
     set(asan_compiler_cxx_flag "-fsanitize=address -shared-libasan")
-    set(asan_link_flags "-fsanitize=address")
+    set(asan_link_flags "-fsanitize=address -shared-libasan")
 endif()
 
 # UBSAN build variant flags.
