@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WiredTigerCache explorer</title>
+<style>
+  :root {
+    --bg: #14171c; --panel: #1d222a; --border: #2c333e; --fg: #d7dde6;
+    --dim: #8b95a5; --accent: #4c8dff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 13px/1.45 system-ui, sans-serif; display: flex; flex-direction: column; height: 100vh; }
+  header { padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  header h1 { margin: 0; font-size: 15px; font-weight: 600; }
+  header .sub { color: var(--dim); font-size: 12px; margin-top: 2px; }
+  #controls { display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: center; padding: 10px 16px;
+              border-bottom: 1px solid var(--border); background: var(--panel); }
+  .group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .group > label.title { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  select, button { background: #262d38; color: var(--fg); border: 1px solid var(--border);
+                   border-radius: 4px; padding: 3px 6px; font: inherit; }
+  label.src { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none;
+              padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px; background: #262d38; }
+  label.src input { accent-color: inherit; margin: 0; }
+  label.src .swatch { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  label.src .count { color: var(--dim); font-size: 11px; }
+  label.chk { display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
+  #wrap { flex: 1; position: relative; min-height: 0; }
+  canvas, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  /* SVG overlay: axes, titles and legend only; data marks live on the canvas below */
+  #overlay { pointer-events: none; }
+  #overlay text { fill: var(--dim); font: 11px system-ui, sans-serif; }
+  #overlay .title { fill: var(--fg); font-size: 12px; }
+  #overlay .axis path, #overlay .axis line { stroke: #3a4350; }
+  #overlay .frame { fill: none; stroke: #3a4350; }
+  #tooltip { position: absolute; pointer-events: none; background: rgba(20,23,28,.95);
+             border: 1px solid var(--border); border-radius: 5px; padding: 7px 9px; font-size: 12px;
+             display: none; z-index: 10; max-width: 340px; white-space: pre; }
+  #stats { position: absolute; left: 12px; bottom: 8px; color: var(--dim); font-size: 11px; pointer-events: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>WiredTigerCache explorer</h1>
+  <div class="sub" id="subtitle"></div>
+</header>
+<div id="controls">
+  <div class="group"><label class="title">Sources</label><span id="srcs"></span></div>
+  <div class="group"><label class="title">View</label>
+    <select id="mode">
+      <option value="scatter">Scatter (field vs field)</option>
+      <option value="timeseries">Time series (per snapshot)</option>
+      <option value="grid">Page grid (one snapshot)</option>
+    </select>
+  </div>
+  <div class="group" id="scatter-opts">
+    <label>X <select id="xf"></select></label>
+    <label>Y <select id="yf"></select></label>
+    <label class="chk"><input type="checkbox" id="logx"> log X</label>
+    <label class="chk"><input type="checkbox" id="logy"> log Y</label>
+  </div>
+  <div class="group" id="ts-opts" style="display:none">
+    <label>Field <select id="tf"></select></label>
+    <label>Agg <select id="agg"><option>sum</option><option>avg</option><option>max</option></select></label>
+  </div>
+  <div class="group" id="grid-opts" style="display:none">
+    <label>Snapshot <select id="gs"></select></label>
+    <label>State <select id="gdirty"><option value="">all</option><option value="0">clean</option><option value="1">dirty</option></select></label>
+    <label>Type <select id="gtype"><option value="">all</option><option value="internal">internal</option><option value="leaf">leaf</option></select></label>
+    <label>Hue <select id="cfa"></select></label>
+    <label>Colour 2 <select id="cfb"></select></label>
+    <label id="balwrap" style="display:none">Balance
+      <input type="range" id="cbal" min="0" max="100" value="50" style="width:90px; vertical-align:-3px">
+    </label>
+  </div>
+</div>
+<div id="wrap">
+  <canvas id="cv"></canvas>
+  <svg id="overlay"></svg>
+  <div id="tooltip"></div>
+  <div id="stats"></div>
+</div>
+<script>__D3__</script>
+<script>
+const DATA = __DATA__;
+const FIELDS = DATA.fields, SOURCES = DATA.sources, TIMES = DATA.times;
+// read_gen 0-2 are reserved states, not generations; keep them out of the scale.
+const RG_SPECIAL = { 0: ["not set", "#8a93a3"], 1: ["evict soon", "hsl(140,75%,48%)"], 2: ["won't need", "hsl(285,70%,62%)"] };
+// WT_PAGE_* values; the Type selector filters on internal vs leaf pages
+const PAGE_INTERNAL = new Set([3, 6]);   // WT_PAGE_COL_INT, WT_PAGE_ROW_INT
+const PAGE_LEAF = new Set([4, 5, 7]);    // WT_PAGE_COL_VAR, WT_PAGE_OVFL, WT_PAGE_ROW_LEAF
+const PAGE_TYPE_NAMES = { 1: "block manager", 2: "col fix (deprecated)", 3: "col internal",
+                          4: "col var leaf", 5: "overflow", 6: "row internal", 7: "row leaf" };
+// WT_PAGEPIN_* values; like the reserved read_gen states, each pin reason takes a fixed colour.
+const PIN_REASON_NAMES = { 0: "evictable", 1: "prefetched", 2: "internal split gen",
+                           3: "materialization", 4: "uncommitted truncate", 5: "overflow keys",
+                           6: "checkpoint", 7: "disagg dirty internal", 8: "disagg next checkpoint",
+                           9: "metadata recent", 10: "root" };
+// d3 only ships Tableau's 10-colour palette; extend it with two Set2 colours for later values.
+const PIN_REASON_COLORS = d3.schemeTableau10.concat(d3.schemeSet2.slice(2, 4));
+// Discrete fields: value -> [name, colour]; listed values take the fixed colour instead of the
+// continuous hue ramp. Values outside the table (e.g. a new reason in an old build) fall back to
+// the ramp.
+const DISCRETE = {
+  read_gen: RG_SPECIAL,
+  pin_reason: Object.fromEntries(Object.entries(PIN_REASON_NAMES).map(([v, name], i) =>
+    [v, [name, PIN_REASON_COLORS[i]]])),
+};
+const COLORS = {"test.wt": "#4c8dff", "WiredTigerHS.wt": "#ff7043", "WiredTiger.wt": "#26a69a"};
+
+// default to the busiest non-internal table (the user's app table, not WiredTiger*.wt)
+const DEFAULT_SOURCE = SOURCES.filter(s => !s.startsWith("WiredTiger"))
+  .sort((a, b) => DATA.data[b].length - DATA.data[a].length)[0] || SOURCES[0];
+const state = {
+  source: DEFAULT_SOURCE,
+  mode: "grid", xf: "size", yf: "dirty_bytes", logx: false, logy: false,
+  tf: "size", agg: "sum",
+  grid: { snap: TIMES.length - 1, dirty: "", type: "", cfA: "size", cfB: "", bal: .5 },
+};
+
+// ---------- controls ----------
+const $ = id => document.getElementById(id);
+$("subtitle").textContent = `${TIMES.length} snapshots · ${TIMES[0]} .. ${TIMES[TIMES.length - 1]}`;
+
+// one source at a time; the selection drives every view
+const srcBox = $("srcs");
+SOURCES.forEach(s => {
+  const n = DATA.data[s].length;
+  const lab = document.createElement("label");
+  lab.className = "src";
+  lab.style.color = COLORS[s];
+  lab.innerHTML = `<input type="radio" name="source" value="${s.replace(/"/g, "&quot;")}" ${s === DEFAULT_SOURCE ? "checked" : ""} style="accent-color:${COLORS[s]}">` +
+    `<span class="swatch" style="background:${COLORS[s]}"></span>${s}<span class="count">${n.toLocaleString()}</span>`;
+  lab.querySelector("input").addEventListener("change", () => { state.source = s; render(); });
+  srcBox.appendChild(lab);
+});
+
+function fillSelect(el, sel) { FIELDS.forEach(f => el.add(new Option(f, f))); el.value = sel; }
+fillSelect($("xf"), state.xf); fillSelect($("yf"), state.yf); fillSelect($("tf"), state.tf);
+fillSelect($("cfa"), state.grid.cfA);
+$("cfb").add(new Option("(none)", "")); FIELDS.forEach(f => $("cfb").add(new Option(f, f)));
+$("cfb").value = state.grid.cfB;
+for (let i = 0; i < TIMES.length; i++) $("gs").add(new Option(`${i} — ${TIMES[i].slice(11, 19)}`, i));
+$("gs").value = state.grid.snap;
+[["mode", "mode"], ["xf", "xf"], ["yf", "yf"], ["tf", "tf"], ["agg", "agg"]]
+  .forEach(([id, key]) => $(id).addEventListener("change", e => { state[key] = e.target.value; render(); }));
+[["logx"], ["logy"]].forEach(([id]) => $(id).addEventListener("change", e => { state[id] = e.target.checked; render(); }));
+$("gs").addEventListener("change", e => { state.grid.snap = +e.target.value; render(); }); // select values are strings
+[["gdirty", "dirty"], ["gtype", "type"], ["cfa", "cfA"], ["cfb", "cfB"]]
+  .forEach(([id, key]) => $(id).addEventListener("change", e => { state.grid[key] = e.target.value; syncBal(); render(); }));
+// the balance slider only matters when a second colour field is chosen
+function syncBal() { $("balwrap").style.display = state.grid.cfB ? "" : "none"; }
+$("cbal").addEventListener("input", e => { state.grid.bal = e.target.value / 100; render(); });
+syncBal();
+// setting .value does not fire change, so sync the option groups explicitly on load
+function syncModeUI() {
+  $("scatter-opts").style.display = state.mode === "scatter" ? "" : "none";
+  $("ts-opts").style.display = state.mode === "timeseries" ? "" : "none";
+  $("grid-opts").style.display = state.mode === "grid" ? "" : "none";
+}
+$("mode").addEventListener("change", () => { syncModeUI(); });
+// start in the page grid view
+$("mode").value = state.mode;
+syncModeUI();
+
+// ---------- layers ----------
+// Canvas draws data marks (fast for 100k+ points); the SVG overlay holds axes,
+// titles and legends, drawn with d3.axis* / scales.
+const cv = $("cv"), ctx = cv.getContext("2d");
+const svg = d3.select("#overlay");
+const defs = svg.append("defs");
+const gFrame = svg.append("rect").attr("class", "frame");
+const gXAxis = svg.append("g").attr("class", "axis");
+const gYAxis = svg.append("g").attr("class", "axis");
+const xTitleEl = svg.append("text").attr("class", "title").attr("text-anchor", "middle");
+const yTitleEl = svg.append("text").attr("class", "title").attr("text-anchor", "middle");
+const gLegend = svg.append("g");
+
+const M = { l: 74, r: 18, t: 14, b: 44 };   // margins; renderers adjust M.b as needed
+let W = 0, H = 0;
+function resize() {
+  const dpr = devicePixelRatio || 1;
+  W = cv.clientWidth; H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  render();
+}
+
+const plotArea = () => ({ pw: W - M.l - M.r, ph: H - M.t - M.b });
+const fmtSI = d3.format("~s");
+const logFmt = v => { const e = Math.log10(v); return Number.isInteger(e) ? "1e" + e : fmtSI(v); };
+
+function layoutFrame() {
+  const { pw, ph } = plotArea();
+  gFrame.attr("x", M.l).attr("y", M.t).attr("width", Math.max(pw, 0)).attr("height", Math.max(ph, 0));
+}
+function showAxes(on) {
+  gXAxis.attr("display", on ? null : "none");
+  gYAxis.attr("display", on ? null : "none");
+}
+function setAxes(xScale, yScale, opts = {}) {
+  const { pw, ph } = plotArea();
+  xScale.range([0, pw]); yScale.range([ph, 0]);
+  showAxes(true);
+  gXAxis.attr("transform", `translate(${M.l},${M.t + ph})`)
+    .call(d3.axisBottom(xScale).ticks(opts.xTicks ?? 6)
+      .tickFormat(opts.xFmt ?? (opts.xLog ? logFmt : fmtSI)).tickSizeOuter(0));
+  gYAxis.attr("transform", `translate(${M.l},${M.t})`)
+    .call(d3.axisLeft(yScale).ticks(opts.yTicks ?? 6)
+      .tickFormat(opts.yFmt ?? (opts.yLog ? logFmt : fmtSI)).tickSizeOuter(0));
+  xTitleEl.text(opts.xTitle ?? "").attr("x", M.l + pw / 2).attr("y", H - 8);
+  yTitleEl.text(opts.yTitle ?? "").attr("transform", `translate(14,${M.t + ph / 2}) rotate(-90)`);
+}
+// items: [{label, lo, hi, ramp: t -> color, swatches?: [{v, name, color}]}]
+function legend(items) {
+  gLegend.selectAll("*").remove();
+  defs.selectAll("linearGradient").remove();
+  if (!items.length) return;
+  let y = M.t + plotArea().ph + 22;
+  for (const it of items) {
+    const x0 = M.l + 90, w = 160;
+    gLegend.append("text").attr("x", x0 - 6).attr("y", y).attr("text-anchor", "end").text(it.label);
+    const gid = "lg" + Math.random().toString(36).slice(2, 8);
+    const grad = defs.append("linearGradient").attr("id", gid);
+    for (let i = 0; i <= 10; i++)
+      grad.append("stop").attr("offset", i * 10 + "%").attr("stop-color", it.ramp(i / 10));
+    gLegend.append("rect").attr("x", x0).attr("y", y - 8).attr("width", w).attr("height", 8)
+      .attr("fill", `url(#${gid})`);
+    gLegend.append("text").attr("x", x0).attr("y", y + 13).text(fmtSI(it.lo));
+    gLegend.append("text").attr("x", x0 + w).attr("y", y + 13).attr("text-anchor", "end").text(fmtSI(it.hi));
+    if (it.swatches) {
+      let cx = x0 + w + 70, sy = y;
+      for (const sw of it.swatches) {
+        const label = `${sw.v} ${sw.name}`;
+        // wrap to a new row when the swatches run past the right edge of the plot
+        if (cx > x0 + w + 70 && cx + 14 + label.length * 6.5 > M.l + plotArea().pw) { cx = x0 + w + 70; sy += 16; }
+        gLegend.append("rect").attr("x", cx).attr("y", sy - 8).attr("width", 10).attr("height", 10)
+          .attr("fill", sw.color);
+        gLegend.append("text").attr("x", cx + 14).attr("y", sy).text(label);
+        cx += 14 + label.length * 6.5 + 16; // estimate; avoids getComputedTextLength (unreliable headless)
+      }
+      y = sy;
+    }
+    y += 30;
+  }
+}
+
+// ---------- scatter ----------
+let pts = null;   // {x:Float32Array, y:Float32Array, src:Int16Array, row:Int32Array, n}
+function renderScatter() {
+  M.b = 44; layoutFrame(); showAxes(false); legend([]);
+  const xi = FIELDS.indexOf(state.xf), yi = FIELDS.indexOf(state.yf);
+  let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+  for (const r of DATA.data[state.source]) {
+    const x = r[1 + xi], y = r[1 + yi];
+    if (state.logx && x <= 0 || state.logy && y <= 0) continue;
+    if (x < xmin) xmin = x; if (x > xmax) xmax = x;
+    if (y < ymin) ymin = y; if (y > ymax) ymax = y;
+  }
+  if (!isFinite(xmin)) { ctx.clearRect(0, 0, W, H); $("stats").textContent = "no data selected"; return; }
+  // a degenerate domain needs padding around the value (or 1 when it is 0)
+  if (xmin === xmax) { const p = Math.abs(xmin) / 2 || 1; xmin -= p; xmax += p; }
+  if (ymin === ymax) { const p = Math.abs(ymin) / 2 || 1; ymin -= p; ymax += p; }
+
+  const xScale = state.logx ? d3.scaleLog().domain([xmin, xmax]) : d3.scaleLinear().domain([xmin, xmax]);
+  const yScale = state.logy ? d3.scaleLog().domain([ymin, ymax]) : d3.scaleLinear().domain([ymin, ymax]);
+  setAxes(xScale, yScale, {
+    xTitle: `${state.xf}${state.logx ? " (log)" : ""}`, yTitle: `${state.yf}${state.logy ? " (log)" : ""}`,
+    xLog: state.logx, yLog: state.logy,
+  });
+
+  ctx.clearRect(0, 0, W, H);
+  const { pw, ph } = plotArea();
+  // collect transformed points, then draw in one pass
+  const s = state.source, rows = DATA.data[s];
+  const arr = [];
+  for (let i = 0; i < rows.length; i++) {
+    const xv = state.logx ? Math.log10(rows[i][1 + xi]) : rows[i][1 + xi];
+    const yv = state.logy ? Math.log10(rows[i][1 + yi]) : rows[i][1 + yi];
+    if (!isFinite(xv) || !isFinite(yv)) continue;
+    // scaleLog takes raw values (it logs internally); Pearson uses the log10 transform
+    arr.push([M.l + xScale(rows[i][1 + xi]), M.t + yScale(rows[i][1 + yi]), i, xv, yv]);
+  }
+  const perSrc = [[s, arr]], n = arr.length;
+  pts = { x: new Float32Array(n), y: new Float32Array(n), src: new Int16Array(n), row: new Int32Array(n), n: 0 };
+  let sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+  perSrc.forEach(([s, arr]) => {
+    const si = SOURCES.indexOf(s);
+    ctx.fillStyle = COLORS[s]; ctx.globalAlpha = 0.5;
+    for (const [px, py, i, xv, yv] of arr) {
+      pts.x[pts.n] = px; pts.y[pts.n] = py; pts.src[pts.n] = si; pts.row[pts.n] = i; pts.n++;
+      ctx.fillRect(px - 1, py - 1, 2.5, 2.5);
+      sx += xv; sy += yv; sxx += xv * xv; syy += yv * yv; sxy += xv * yv;
+    }
+    ctx.globalAlpha = 1;
+  });
+  const r = (n * sxy - sx * sy) / Math.sqrt((n * sxx - sx * sx) * (n * syy - sy * sy));
+  $("stats").textContent = `${n.toLocaleString()} points · Pearson r(${state.xf}, ${state.yf}) = ` +
+    (isFinite(r) ? r.toFixed(3) : "—");
+}
+
+// ---------- time series ----------
+let tsPts = null; // {x:Float32Array, y:Float32Array, src:Int16Array, snap:Int16Array, n}
+let tsAgg = null; // [srcIdx][snap] -> [sum, count, max]
+function renderTS() {
+  M.b = 44; layoutFrame(); showAxes(false); legend([]);
+  const fi = FIELDS.indexOf(state.tf);
+  const N = TIMES.length;
+  // series[srcIdx][snap] = [sum, count, max]
+  tsAgg = SOURCES.map(() => new Array(N).fill(null));
+  {
+    const si = SOURCES.indexOf(state.source), rows = DATA.data[state.source];
+    for (const r of rows) {
+      const snap = r[0], v = r[1 + fi];
+      if (!tsAgg[si][snap]) tsAgg[si][snap] = [v, 1, v];
+      else { const a = tsAgg[si][snap]; a[0] += v; a[1]++; if (v > a[2]) a[2] = v; }
+    }
+  }
+  let ymin = Infinity, ymax = -Infinity;
+  for (const ser of tsAgg) for (const a of ser) if (a) {
+    const v = state.agg === "sum" ? a[0] : state.agg === "avg" ? a[0] / a[1] : a[2];
+    if (v < ymin) ymin = v; if (v > ymax) ymax = v;
+  }
+  if (!isFinite(ymin)) { ctx.clearRect(0, 0, W, H); $("stats").textContent = "no data selected"; return; }
+  if (ymin === ymax) { ymin -= .5; ymax += .5; }
+
+  const xScale = d3.scaleLinear().domain([0, N - 1]);
+  const yScale = d3.scaleLinear().domain([ymin, ymax]);
+  setAxes(xScale, yScale, {
+    xTitle: "snapshot time", yTitle: `${state.agg}(${state.tf}) per snapshot`,
+    xTicks: 8, xFmt: v => { const i = Math.round(v); return i >= 0 && i < N ? TIMES[i].slice(11, 19) : ""; },
+  });
+
+  ctx.clearRect(0, 0, W, H);
+  const { pw, ph } = plotArea();
+  tsPts = { x: new Float32Array(N * SOURCES.length), y: new Float32Array(N * SOURCES.length),
+            src: new Int16Array(N * SOURCES.length), snap: new Int16Array(N * SOURCES.length), n: 0 };
+  {
+    const s = state.source, si = SOURCES.indexOf(s), start = tsPts.n;
+    ctx.strokeStyle = COLORS[s]; ctx.lineWidth = 1.5; ctx.beginPath();
+    let pen = false;
+    for (let snap = 0; snap < N; snap++) {
+      const a = tsAgg[si][snap];
+      if (!a) continue;
+      const v = state.agg === "sum" ? a[0] : state.agg === "avg" ? a[0] / a[1] : a[2];
+      const x = M.l + xScale(snap), y = M.t + yScale(v);
+      pen ? ctx.lineTo(x, y) : ctx.moveTo(x, y); pen = true;
+      tsPts.x[tsPts.n] = x; tsPts.y[tsPts.n] = y; tsPts.src[tsPts.n] = si; tsPts.snap[tsPts.n] = snap; tsPts.n++;
+    }
+    ctx.stroke();
+    ctx.fillStyle = COLORS[s];
+    for (let i = start; i < tsPts.n; i++) {
+      if (!tsAgg[si][tsPts.snap[i]]) continue;
+      ctx.beginPath(); ctx.arc(tsPts.x[i], tsPts.y[i], 2.5, 0, 7); ctx.fill();
+    }
+    ctx.lineWidth = 1;
+  }
+  $("stats").textContent = `${N} snapshots · ${state.agg} of ${state.tf}`;
+}
+
+// ---------- page grid (one snapshot) ----------
+let ggrid = null; // {cols, cw, ch, row:Int32Array, n}
+function renderGrid() {
+  // index into DATA.data[source] so hover can resolve the original row;
+  // the state and type filters keep only matching pages of the chosen snapshot
+  const all = DATA.data[state.source], di = FIELDS.indexOf("dirty") + 1, ti = FIELDS.indexOf("page_type") + 1, idx = [];
+  for (let i = 0; i < all.length; i++) {
+    if (all[i][0] !== state.grid.snap) continue;
+    if (state.grid.dirty !== "" && String(all[i][di]) !== state.grid.dirty) continue;
+    const tset = state.grid.type === "internal" ? PAGE_INTERNAL : state.grid.type === "leaf" ? PAGE_LEAF : null;
+    if (tset && !tset.has(all[i][ti])) continue;
+    idx.push(i);
+  }
+  const snapTotal = all.reduce((n, r) => n + (r[0] === state.grid.snap), 0);
+  if (!idx.length) { ctx.clearRect(0, 0, W, H); layoutFrame(); showAxes(false); legend([]);
+    const what = [state.grid.dirty === "1" ? "dirty" : state.grid.dirty === "0" ? "clean" : "",
+                  state.grid.type].filter(Boolean).join(" ");
+    $("stats").textContent = `no ${what} pages in this snapshot`; ggrid = null; return; }
+  const rows = idx.map(i => all[i]);
+  const ai = FIELDS.indexOf(state.grid.cfA);
+  const bi = state.grid.cfB ? FIELDS.indexOf(state.grid.cfB) : -1;
+  // discrete fields take a fixed colour per value instead of the continuous hue ramp
+  const specA = DISCRETE[state.grid.cfA], specB = bi >= 0 ? DISCRETE[state.grid.cfB] : null;
+  let amin = Infinity, amax = -Infinity, bmin = Infinity, bmax = -Infinity;
+  for (const r of rows) {
+    const a = r[1 + ai];
+    if (!specA || !(a in specA)) { if (a < amin) amin = a; if (a > amax) amax = a; }
+    if (bi >= 0) {
+      const b = r[1 + bi];
+      if (!specB || !(b in specB)) { if (b < bmin) bmin = b; if (b > bmax) bmax = b; }
+    }
+  }
+  // a field whose values are all special has no scale; the fallback range is unused
+  if (!isFinite(amin)) { amin = 0; amax = 1; }
+  if (bi >= 0 && !isFinite(bmin)) { bmin = 0; bmax = 1; }
+  if (amin === amax) { amin -= .5; amax += .5; }
+  if (bi >= 0 && bmin === bmax) { bmin -= .5; bmax += .5; }
+  M.b = bi >= 0 ? 96 : 78; // room for one or two legend rows
+
+  layoutFrame(); showAxes(false);
+  const { pw, ph } = plotArea();
+  xTitleEl.text(`${state.source} @ ${TIMES[state.grid.snap].slice(11, 19)} — one cell per page`)
+    .attr("x", M.l + pw / 2).attr("y", H - 8);
+  yTitleEl.text("");
+
+  // one field: hue encodes cfA (blue -> red); two fields: each gets its own hue range
+  // (colour 1 blue->teal, colour 2 red->orange) and the cell is split by a line across the
+  // main diagonal — colour 1 on the top-left side, colour 2 on the bottom-right side, with
+  // the crossover position set by the balance slider. Discrete values (reserved read_gen states,
+  // pin reasons) take fixed colors.
+  const color = (a) => {
+    if (specA && specA[a]) return specA[a][1];
+    return d3.hsl(215 - 200 * ((a - amin) / (amax - amin)), .85, .6).toString();
+  };
+  const rampA = t => d3.hsl(215 - 50 * t, .85, .55);
+  const rampB = t => d3.hsl(355 + 40 * t, .85, .55);
+
+  const cols = Math.max(1, Math.ceil(Math.sqrt(rows.length * pw / ph)));
+  const nRows = Math.ceil(rows.length / cols);
+  const cw = pw / cols, ch = ph / nRows;
+  ggrid = { cols, cw, ch, row: new Int32Array(idx), n: idx.length };
+  ctx.clearRect(0, 0, W, H);
+  const bal = state.grid.bal;
+  for (let i = 0; i < idx.length; i++) {
+    const r = rows[i];
+    const a = r[1 + ai], b = bi >= 0 ? r[1 + bi] : 0;
+    const x = M.l + (i % cols) * cw, y = M.t + Math.floor(i / cols) * ch;
+    const gap = cw >= 3 && ch >= 3 ? 1 : 0;
+    if (bi < 0) {
+      ctx.fillStyle = color(a);
+      ctx.fillRect(x, y, Math.max(cw - gap, 1), Math.max(ch - gap, 1));
+      continue;
+    }
+    const cA = specA && specA[a] ? d3.hsl(specA[a][1]) : rampA((a - amin) / (amax - amin));
+    const cB = specB && specB[b] ? d3.hsl(specB[b][1]) : rampB((b - bmin) / (bmax - bmin));
+    const w = Math.max(cw - gap, 1), h = Math.max(ch - gap, 1);
+    ctx.fillStyle = cA.toString();
+    ctx.fillRect(x, y, w, h);
+    // crossover line u + v = s in cell-local coords: s runs from the top-left corner (s=0,
+    // all colour 2) to the bottom-right corner (s=2, all colour 1); the slider moves it
+    const s = 2 * (1 - bal);
+    ctx.fillStyle = cB.toString();
+    ctx.beginPath();
+    if (s <= 1)
+      for (const [u, v] of [[s, 0], [1, 0], [1, 1], [0, 1], [0, s]]) {
+        u === s && v === 0 ? ctx.moveTo(x + u * w, y + v * h) : ctx.lineTo(x + u * w, y + v * h);
+      }
+    else
+      for (const [u, v] of [[1, s - 1], [1, 1], [s - 1, 1]]) {
+        u === 1 && v === s - 1 ? ctx.moveTo(x + u * w, y + v * h) : ctx.lineTo(x + u * w, y + v * h);
+      }
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // legends: gradient bar per encoded field; discrete values (read_gen states, pin reasons) as
+  // swatches
+  const sw = spec => spec ? Object.entries(spec).map(([v, [name, c]]) => ({ v, name, color: c }))
+    : undefined;
+  const ge3 = f => f === "read_gen" ? " (≥3)" : "";
+  let items;
+  if (bi < 0) {
+    items = [{
+      label: `hue: ${state.grid.cfA}${ge3(state.grid.cfA)}`, lo: amin, hi: amax,
+      ramp: t => d3.hsl(215 - 200 * t, .85, .6).toString(), swatches: sw(specA),
+    }];
+  } else {
+    items = [
+      { label: `colour 1 (top-left): ${state.grid.cfA}${ge3(state.grid.cfA)}`, lo: amin, hi: amax,
+        ramp: t => rampA(t).toString(), swatches: sw(specA) },
+      { label: `colour 2 (bottom-right): ${state.grid.cfB}${ge3(state.grid.cfB)}`, lo: bmin, hi: bmax,
+        ramp: t => rampB(t).toString(), swatches: sw(specB) },
+    ];
+  }
+  legend(items);
+
+  const filtered = state.grid.dirty !== "" || state.grid.type !== "";
+  const shown = filtered ? `${rows.length.toLocaleString()} of ${snapTotal.toLocaleString()} pages`
+    : rows.length.toLocaleString() + " pages";
+  $("stats").textContent = `${shown} · ${state.source} @ snapshot ${state.grid.snap}`;
+}
+
+function render() {
+  if (state.mode === "scatter") renderScatter();
+  else if (state.mode === "timeseries") renderTS();
+  else renderGrid();
+}
+
+// ---------- hover ----------
+const tip = $("tooltip");
+cv.addEventListener("mousemove", e => {
+  const rect = cv.getBoundingClientRect(), mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  let rowIdx = null, srcName = null, snapIdx = null;
+  if (state.mode === "grid") {
+    // cell lookup is O(1): grid cells tile the plot area contiguously
+    if (ggrid && mx >= M.l && my >= M.t &&
+        mx < M.l + (W - M.l - M.r) && my < M.t + (H - M.t - M.b)) {
+      const c = Math.floor((mx - M.l) / ggrid.cw), r = Math.floor((my - M.t) / ggrid.ch);
+      if (r * ggrid.cols + c < ggrid.n) { rowIdx = ggrid.row[r * ggrid.cols + c]; srcName = state.source; }
+    }
+  } else {
+    let best = null, bd = 100; // 10 px radius squared
+    const P = state.mode === "scatter" ? pts : tsPts;
+    if (P) for (let i = 0; i < P.n; i++) {
+      const dx = P.x[i] - mx, dy = P.y[i] - my, d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (best !== null) {
+      srcName = SOURCES[P.src[best]];
+      rowIdx = P.row ? P.row[best] : null;
+      snapIdx = P.snap ? P.snap[best] : null;
+    }
+  }
+  // scatter/grid resolve a row, time series resolves a snapshot; no hit means hide
+  if (rowIdx === null && snapIdx === null) { tip.style.display = "none"; return; }
+  let text;
+  if (state.mode !== "timeseries") {
+    const s = srcName, r = DATA.data[s][rowIdx];
+    text = `<b style="color:${COLORS[s]}">${s}</b>  snapshot ${r[0]} (${TIMES[r[0]].slice(11, 19)})\n` +
+      FIELDS.map((f, i) => {
+        const v = r[1 + i];
+        const dv = DISCRETE[f] ? DISCRETE[f][v] : null;
+        const note = dv ? ` (${dv[0]})`
+          : f === "page_type" && PAGE_TYPE_NAMES[v] ? ` (${PAGE_TYPE_NAMES[v]})` : "";
+        return `${f}: ${v == null ? "n/a" : v.toLocaleString()}${note}`;
+      }).join("\n");
+  } else {
+    const snap = snapIdx, s2 = state.source;
+    text = `<b>${TIMES[snap]}</b> (snapshot ${snap})\n`;
+    {
+      const a = tsAgg[SOURCES.indexOf(s2)][snap];
+      if (a) {
+        const v = state.agg === "sum" ? a[0] : state.agg === "avg" ? a[0] / a[1] : a[2];
+        text += `<span style="color:${COLORS[s2]}">${s2}</span>: ${v.toLocaleString()}  (${a[1]} pages)\n`;
+      }
+    }
+  }
+  tip.innerHTML = text; // tooltip content is built from our own labels + numeric values
+  tip.style.display = "block";
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  tip.style.left = Math.min(mx + 14, W - tw - 6) + "px";
+  tip.style.top = Math.min(my + 14, H - th - 6) + "px";
+});
+cv.addEventListener("mouseleave", () => tip.style.display = "none");
+
+// register after all top-level definitions so a synchronous observer callback is safe
+new ResizeObserver(resize).observe(cv);
+resize();
+</script>
+</body>
+</html>
