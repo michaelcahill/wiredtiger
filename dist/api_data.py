@@ -1266,7 +1266,7 @@ wiredtiger_open_statistics_log_configuration = [
 # wiredtiger_open and WT_CONNECTION.reconfigure cache log configurations.
 # Dumps the state of the cache to WiredTigerCache.<timestamp>.json files using cache cursors.
 cache_log_configuration_common = [
-    Config('json', 'false', r'''
+    Config('json', 'true', r'''
         encode the cache log in JSON format''',
         type='boolean'),
     Config('on_close', 'false', r'''log the cache state on database close''',
@@ -1278,7 +1278,7 @@ cache_log_configuration_common = [
     Config('timestamp', '"%b %d %H:%M:%S"', r'''
         a timestamp prepended to each log record. May contain \c strftime conversion specifications.
         When \c json is configured, defaults to \c "%Y-%m-%dT%H:%M:%S.000Z"'''),
-    Config('wait', '0', r'''
+    Config('wait', '5', r'''
         seconds to wait between each write of the cache log; setting this value above 0
         configures cache logging''',
         min='0', max='100000'),

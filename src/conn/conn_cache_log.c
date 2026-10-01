@@ -83,10 +83,14 @@ __cachelog_config(WT_SESSION_IMPL *session, const char **cfg, bool *runp)
     WT_RET(__wt_config_gets(session, cfg, "cache_log.json", &cval));
     if (cval.val != 0 && WT_STAT_ENABLED(session))
         FLD_SET(conn->cache_log_flags, WT_CACHELOG_JSON);
+    else
+        FLD_CLR(conn->cache_log_flags, WT_CACHELOG_JSON);
 
     WT_RET(__wt_config_gets(session, cfg, "cache_log.on_close", &cval));
     if (cval.val != 0)
         FLD_SET(conn->cache_log_flags, WT_CACHELOG_ON_CLOSE);
+    else
+        FLD_CLR(conn->cache_log_flags, WT_CACHELOG_ON_CLOSE);
 
     WT_RET(__wt_config_gets(session, cfg, "cache_log.sample", &cval));
     conn->cache_log.sample = (uint64_t)cval.val;

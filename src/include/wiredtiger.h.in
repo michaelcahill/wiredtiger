@@ -2160,7 +2160,7 @@ struct __wt_connection {
      * uses a session from the configured session_max., a set of related configuration options
      * defined as follows.}
      * @config{&nbsp;&nbsp;&nbsp;&nbsp;json, encode the cache log in JSON
-     * format., a boolean flag; default \c false.}
+     * format., a boolean flag; default \c true.}
      * @config{&nbsp;&nbsp;&nbsp;&nbsp;on_close, log the
      * cache state on database close., a boolean flag; default \c false.}
      * @config{&nbsp;&nbsp;&nbsp;&nbsp;path, the name of a directory into which cache log files are
@@ -2176,7 +2176,7 @@ struct __wt_connection {
      * %H:%M:%S".}
      * @config{&nbsp;&nbsp;&nbsp;&nbsp;wait, seconds to wait between each write of the
      * cache log; setting this value above 0 configures cache logging., an integer between \c 0 and
-     * \c 100000; default \c 0.}
+     * \c 100000; default \c 5.}
      * @config{ ),,}
      * @config{cache_max_wait_ms, the maximum number of milliseconds an application thread will wait
      * for space to be available in cache before giving up.  Default or 0 will wait forever.
@@ -3099,22 +3099,23 @@ struct __wt_connection {
  * a session from the configured session_max., a set of related configuration options defined as
  * follows.}
  * @config{&nbsp;&nbsp;&nbsp;&nbsp;json, encode the cache log in JSON format., a boolean
- * flag; default \c false.}
- * @config{&nbsp;&nbsp;&nbsp;&nbsp;on_close, log the cache state on
- * database close., a boolean flag; default \c false.}
- * @config{&nbsp;&nbsp;&nbsp;&nbsp;path, the
- * name of a directory into which cache log files are written.  The directory must already exist.
- * If the value is not an absolute path\, the path is relative to the database home (see @ref
- * absolute_path for more information)., a string; default \c ".".}
+ * flag; default \c true.}
+ * @config{&nbsp;&nbsp;&nbsp;&nbsp;on_close, log the cache state on database
+ * close., a boolean flag; default \c false.}
+ * @config{&nbsp;&nbsp;&nbsp;&nbsp;path, the name of a
+ * directory into which cache log files are written.  The directory must already exist.  If the
+ * value is not an absolute path\, the path is relative to the database home (see @ref absolute_path
+ * for more information)., a string; default \c ".".}
+ * @config{&nbsp;&nbsp;&nbsp;&nbsp;sample, number
+ * of pages to sample per file when dumping the cache state; a value of 0 logs every page., an
+ * integer greater than or equal to \c 0; default \c 10000.}
  * @config{&nbsp;&nbsp;&nbsp;&nbsp;
- * sample, number of pages to sample per file when dumping the cache state; a value of 0 logs every
- * page., an integer greater than or equal to \c 0; default \c 10000.}
- * @config{&nbsp;&nbsp;&nbsp;&nbsp;timestamp, a timestamp prepended to each log record.  May contain
- * \c strftime conversion specifications.  When \c json is configured\, defaults to \c
- * "%Y-%m-%dT%H:%M:%S.000Z"., a string; default \c "%b %d %H:%M:%S".}
- * @config{&nbsp;&nbsp;&nbsp;&nbsp;wait, seconds to wait between each write of the cache log;
- * setting this value above 0 configures cache logging., an integer between \c 0 and \c 100000;
- * default \c 0.}
+ * timestamp, a timestamp prepended to each log record.  May contain \c strftime conversion
+ * specifications.  When \c json is configured\, defaults to \c "%Y-%m-%dT%H:%M:%S.000Z"., a string;
+ * default \c "%b %d %H:%M:%S".}
+ * @config{&nbsp;&nbsp;&nbsp;&nbsp;wait, seconds to wait between each
+ * write of the cache log; setting this value above 0 configures cache logging., an integer between
+ * \c 0 and \c 100000; default \c 5.}
  * @config{ ),,}
  * @config{cache_max_wait_ms, the maximum number of milliseconds an application thread will wait for
  * space to be available in cache before giving up.  Default or 0 will wait forever.  Individual

@@ -63,10 +63,16 @@ class test_cache_log_basic(wttest.WiredTigerTestCase):
         ds.populate()
         self.session.checkpoint(None)
 
-        # Connect with cache_log disabled (wait=0 is the default).
-        self.reopen_conn()
+        # Connect with cache logging explicitly disabled (the default wait is 5).
+        self.reopen_conn(config='cache_log=(wait=0)')
 
-        # No cache log file should exist.
+        # Remove any file the default-enabled server wrote before the reopen; with the
+        # server stopped no new file can appear.
+        import glob
+        for f in glob.glob('WiredTigerCache*'):
+            os.remove(f)
+
+        time.sleep(2)
         self.assertIsNone(find_cache_log_file('.'),
                           'No cache log file expected when wait=0')
 
@@ -174,8 +180,8 @@ class test_cache_log_timestamp(wttest.WiredTigerTestCase):
         ds.populate()
         self.session.checkpoint(None)
 
-        # Use a simple, distinctive timestamp format.
-        self.conn.reconfigure('cache_log=(wait=1,timestamp="%H:%M:%S")')
+        # Use a simple, distinctive timestamp format in text mode (json is the default).
+        self.conn.reconfigure('cache_log=(wait=1,json=false,timestamp="%H:%M:%S")')
         self.wait_for_log_file(5)
         self.conn.reconfigure('cache_log=(wait=0)')
 
@@ -202,7 +208,8 @@ class test_cache_log_timestamp(wttest.WiredTigerTestCase):
         ds.populate()
         self.session.checkpoint(None)
 
-        self.conn.reconfigure('cache_log=(wait=1)')
+        # Text mode: json defaults to true.
+        self.conn.reconfigure('cache_log=(wait=1,json=false)')
         self.wait_for_log_file(5)
         self.conn.reconfigure('cache_log=(wait=0)')
 
@@ -405,7 +412,8 @@ class test_cache_log_content(wttest.WiredTigerTestCase):
         ds2.populate()
         self.session.checkpoint(None)
 
-        self.conn.reconfigure('cache_log=(wait=1)')
+        # Text mode: json defaults to true.
+        self.conn.reconfigure('cache_log=(wait=1,json=false)')
         self.wait_for_log_file(5)
         self.conn.reconfigure('cache_log=(wait=0)')
 
@@ -462,7 +470,8 @@ class test_cache_log_content(wttest.WiredTigerTestCase):
         ds.populate()
         self.session.checkpoint(None)
 
-        self.conn.reconfigure('cache_log=(wait=1)')
+        # Text mode: json defaults to true.
+        self.conn.reconfigure('cache_log=(wait=1,json=false)')
         self.wait_for_log_file(5)
         self.conn.reconfigure('cache_log=(wait=0)')
 
@@ -523,6 +532,17 @@ class test_cache_log_sample(wttest.WiredTigerTestCase):
         ds.populate()
         self.session.checkpoint(None)
 
+        # Cache logging is enabled by default; stop the server so the first file written in each
+        # test reflects that test's configuration.
+        self.reopen_conn(config='cache_log=(wait=0)')
+
+        # The reopen starts with a cold cache and the table's data handle closed; read the table
+        # so its handle is open and its pages are resident, which the cache cursors require.
+        cursor = self.session.open_cursor(f'table:{self.test_name}')
+        while cursor.next() == 0:
+            pass
+        cursor.close()
+
     def _log_pages_for_table(self):
         log_file = find_cache_log_file('.')
         self.assertIsNotNone(log_file)
@@ -541,7 +561,7 @@ class test_cache_log_sample(wttest.WiredTigerTestCase):
         Test that sample=N limits a per-file dump to at most N pages.
         """
         sample = 10
-        self.conn.reconfigure(f'cache_log=(wait=1,json=true,sample={sample})')
+        self.conn.reconfigure(f'cache_log=(wait=1,sample={sample})')
         self.wait_for_log_file(5)
         self.conn.reconfigure('cache_log=(wait=0)')
 
@@ -554,7 +574,7 @@ class test_cache_log_sample(wttest.WiredTigerTestCase):
         """
         Test that sample=0 logs every resident page, not just a sample.
         """
-        self.conn.reconfigure('cache_log=(wait=1,json=true,sample=0)')
+        self.conn.reconfigure('cache_log=(wait=1,sample=0)')
         self.wait_for_log_file(5)
         self.conn.reconfigure('cache_log=(wait=0)')
 
@@ -566,7 +586,7 @@ class test_cache_log_sample(wttest.WiredTigerTestCase):
         """
         Test that the default sample of 10000 pages leaves a small file unsampled.
         """
-        self.conn.reconfigure('cache_log=(wait=1,json=true)')
+        self.conn.reconfigure('cache_log=(wait=1)')
         self.wait_for_log_file(5)
         self.conn.reconfigure('cache_log=(wait=0)')
 
