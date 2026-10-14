@@ -10,6 +10,7 @@
 |Aggregated Time Windows||[test_rollback_to_stable18.py](../test/suite/test_rollback_to_stable18.py)
 |Backup||[test_txn04.py](../test/suite/test_txn04.py)
 |Backup|Cursors|[test_backup01.py](../test/suite/test_backup01.py), [test_backup11.py](../test/suite/test_backup11.py)
+|Cache Log||[test_cache_log.py](../test/suite/test_cache_log.py)
 |Checkpoint||[test_checkpoint02.py](../test/suite/test_checkpoint02.py)
 |Checkpoint|Checkpoint Cleanup|[test_cc02.py](../test/suite/test_cc02.py)
 |Checkpoint|History Store|[test_checkpoint03.py](../test/suite/test_checkpoint03.py)

@@ -101,6 +101,7 @@ src/conn/conn_layered.c
 src/conn/conn_load_control.c
 src/conn/conn_open.c
 src/conn/conn_page_history.c
+src/conn/conn_cache_log.c
 src/conn/conn_prefetch.c
 src/conn/conn_reconfig.c
 src/conn/conn_stat.c
@@ -108,6 +109,7 @@ src/conn/conn_sweep.c
 src/cursor/cur_backup.c
 src/cursor/cur_backup_incr.c
 src/cursor/cur_bulk.c
+src/cursor/cur_cache.c
 src/cursor/cur_config.c
 src/cursor/cur_ds.c
 src/cursor/cur_dump.c

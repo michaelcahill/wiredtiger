@@ -2665,11 +2665,11 @@ __wt_btree_update_unpublished_min(WT_BTREE *btree, wt_timestamp_t durable_ts)
 }
 
 /*
- * __wt_page_can_evict --
- *     Check whether a page can be evicted.
+ * __wt_pagepin_reason --
+ *     Determine why a page cannot be evicted; return WT_PAGEPIN_NONE if it can be.
  */
-static WT_INLINE bool
-__wt_page_can_evict(WT_SESSION_IMPL *session, WT_REF *ref, bool *inmem_splitp)
+static WT_INLINE WT_PAGEPIN_REASON
+__wt_pagepin_reason(WT_SESSION_IMPL *session, WT_REF *ref, bool *inmem_splitp)
 {
     WT_BTREE *btree;
     WT_PAGE *page;
@@ -2689,7 +2689,7 @@ __wt_page_can_evict(WT_SESSION_IMPL *session, WT_REF *ref, bool *inmem_splitp)
      */
     if (F_ISSET_ATOMIC_8(ref, WT_REF_FLAG_PREFETCH)) {
         WT_STAT_CONN_DSRC_INCR(session, cache_eviction_blocked_prefetched);
-        return (false);
+        return (WT_PAGEPIN_PREFETCHED);
     }
 
     /*
@@ -2724,11 +2724,11 @@ __wt_page_can_evict(WT_SESSION_IMPL *session, WT_REF *ref, bool *inmem_splitp)
       !F_ISSET(session->dhandle, WT_DHANDLE_DEAD | WT_DHANDLE_EXCLUSIVE) &&
       __wt_gen_active(session, WT_GEN_SPLIT, page->pg_intl_split_gen)) {
         WT_STAT_CONN_DSRC_INCR(session, cache_eviction_blocked_internal_page_split);
-        return (false);
+        return (WT_PAGEPIN_INTERNAL_SPLIT_GEN);
     }
 
     if (F_ISSET_ATOMIC_32(btree, WT_BTREE_READONLY))
-        return (true);
+        return (WT_PAGEPIN_NONE);
 
     /*
      * Pages without modify structures can always be evicted as long as they were created via a read
@@ -2741,12 +2741,12 @@ __wt_page_can_evict(WT_SESSION_IMPL *session, WT_REF *ref, bool *inmem_splitp)
      */
     if (mod == NULL) {
         if (page->disagg_info == NULL)
-            return (true);
+            return (WT_PAGEPIN_NONE);
         else if (__wt_materialization_check(session, page->disagg_info->rec_lsn_max))
-            return (true);
+            return (WT_PAGEPIN_NONE);
         else {
             WT_STAT_CONN_DSRC_INCR(session, cache_eviction_blocked_materialization);
-            return (false);
+            return (WT_PAGEPIN_MATERIALIZATION);
         }
     }
 
@@ -2766,8 +2766,12 @@ __wt_page_can_evict(WT_SESSION_IMPL *session, WT_REF *ref, bool *inmem_splitp)
      */
     if (mod->inst_updates != NULL) {
         WT_STAT_CONN_DSRC_INCR(session, cache_eviction_blocked_uncommitted_truncate);
-        return (false);
+        return (WT_PAGEPIN_UNCOMMITTED_TRUNCATE);
     }
+
+    /* The root page can never be evicted. */
+    if (__wt_ref_is_root(ref))
+        return (WT_PAGEPIN_ROOT);
 
     /*
      * We can't split or evict multiblock row-store pages where the parent's key for the page is an
@@ -2780,7 +2784,7 @@ __wt_page_can_evict(WT_SESSION_IMPL *session, WT_REF *ref, bool *inmem_splitp)
       F_ISSET_ATOMIC_16(
         (WT_PAGE *)__wt_atomic_load_ptr_relaxed(&ref->home), WT_PAGE_INTL_OVERFLOW_KEYS)) {
         WT_STAT_CONN_DSRC_INCR(session, cache_eviction_blocked_overflow_keys);
-        return (false);
+        return (WT_PAGEPIN_OVERFLOW_KEYS);
     }
 
     /*
@@ -2791,7 +2795,7 @@ __wt_page_can_evict(WT_SESSION_IMPL *session, WT_REF *ref, bool *inmem_splitp)
     if (__wt_leaf_page_can_split(session, page)) {
         if (inmem_splitp != NULL)
             *inmem_splitp = true;
-        return (true);
+        return (WT_PAGEPIN_NONE);
     }
 
     modified = __wt_page_is_modified(page);
@@ -2804,7 +2808,7 @@ __wt_page_can_evict(WT_SESSION_IMPL *session, WT_REF *ref, bool *inmem_splitp)
     if (!modified && page->disagg_info != NULL && !__wt_page_evict_swap(page) &&
       !__wt_materialization_check(session, page->disagg_info->rec_lsn_max)) {
         WT_STAT_CONN_DSRC_INCR(session, cache_eviction_blocked_materialization);
-        return (false);
+        return (WT_PAGEPIN_MATERIALIZATION);
     }
 
     /*
@@ -2814,7 +2818,7 @@ __wt_page_can_evict(WT_SESSION_IMPL *session, WT_REF *ref, bool *inmem_splitp)
      */
     if (modified && __wt_btree_syncing_by_other_sessions(session)) {
         WT_STAT_CONN_DSRC_INCR(session, cache_eviction_blocked_checkpoint);
-        return (false);
+        return (WT_PAGEPIN_CHECKPOINT);
     }
 
     /*
@@ -2823,7 +2827,7 @@ __wt_page_can_evict(WT_SESSION_IMPL *session, WT_REF *ref, bool *inmem_splitp)
      */
     if (modified && page->disagg_info != NULL && F_ISSET(ref, WT_REF_FLAG_INTERNAL)) {
         WT_STAT_CONN_DSRC_INCR(session, cache_eviction_blocked_disagg_dirty_internal_page);
-        return (false);
+        return (WT_PAGEPIN_DISAGG_DIRTY_INTERNAL);
     }
 
     /*
@@ -2835,17 +2839,27 @@ __wt_page_can_evict(WT_SESSION_IMPL *session, WT_REF *ref, bool *inmem_splitp)
     if (modified && !WT_SESSION_BTREE_SYNC(session) &&
       __wt_btree_disagg_checkpointed(session, btree)) {
         WT_STAT_CONN_DSRC_INCR(session, cache_eviction_blocked_disagg_next_checkpoint);
-        return (false);
+        return (WT_PAGEPIN_DISAGG_NEXT_CKPT);
     }
 
     /* If the metadata page is clean but has modifications that appear too new to evict, skip it. */
     if (WT_IS_ANY_METADATA(btree->dhandle) && !modified &&
       !__wt_txn_visible_all(session, mod->rec_max_txn, mod->rec_max_timestamp)) {
         WT_STAT_CONN_DSRC_INCR(session, cache_eviction_blocked_recently_modified);
-        return (false);
+        return (WT_PAGEPIN_METADATA_RECENT);
     }
 
-    return (true);
+    return (WT_PAGEPIN_NONE);
+}
+
+/*
+ * __wt_page_can_evict --
+ *     Check whether a page can be evicted.
+ */
+static WT_INLINE bool
+__wt_page_can_evict(WT_SESSION_IMPL *session, WT_REF *ref, bool *inmem_splitp)
+{
+    return (__wt_pagepin_reason(session, ref, inmem_splitp) == WT_PAGEPIN_NONE);
 }
 
 /*

@@ -250,6 +250,7 @@ Golomb
 HALFLIFE
 HANDLEOPS
 HFS
+HH
 HOTBACKUP
 Hendrik
 HookCreator
@@ -389,6 +390,7 @@ ObWgfvgw
 Og
 Optane
 Outfmt
+PAGEPIN
 PALI
 PALITE
 PALite
@@ -627,6 +629,7 @@ WinNT
 WiredTiger
 WiredTiger's
 WiredTigerCC
+WiredTigerCache
 WiredTigerCheckpoint
 WiredTigerChunkCache
 WiredTigerError
@@ -798,6 +801,7 @@ bzip
 bzl
 cX
 cacheable
+cachelog
 calc
 callee
 callgraph
@@ -911,6 +915,7 @@ cuberoot
 curbackup
 curbt
 curbulk
+curcache
 curconfig
 curdump
 curfile
@@ -1386,6 +1391,7 @@ localkey
 localtime
 localvalue
 logalter
+logdir
 logf
 logfile
 logmgr
@@ -1601,6 +1607,7 @@ pP
 pR
 pT
 packv
+pagepin
 pagesize
 pali
 palite
@@ -1609,6 +1616,7 @@ param
 params
 parens
 pareto
+parseable
 parserp
 patchp
 pathing
@@ -1685,6 +1693,8 @@ pygit
 pymongo
 qdown
 qn
+qqqq
+qqqqqqq
 qrrSS
 qsort
 quartile
@@ -2119,6 +2129,7 @@ whitespace
 whitespace's
 whitespaces
 wiredTiger
+wiredTigerCache
 wiredTigerTables
 wiredtiger
 workgen

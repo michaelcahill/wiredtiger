@@ -655,7 +655,10 @@ __session_open_cursor_int(WT_SESSION_IMPL *session, const char *uri, WT_CURSOR *
             WT_RET(__wt_curtable_open(session, uri, owner, cfg, cursorp));
         break;
     case 'c':
-        if (WT_PREFIX_MATCH(uri, "colgroup:")) {
+        if (WT_PREFIX_MATCH(uri, "cache:")) {
+            WT_ASSERT(session, other == NULL);
+            WT_RET(__wt_curcache_open(session, uri, cfg, cursorp));
+        } else if (WT_PREFIX_MATCH(uri, "colgroup:")) {
             /*
              * Column groups are a special case: open a cursor on the underlying data source.
              */

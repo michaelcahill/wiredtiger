@@ -29,3 +29,6 @@ CLAUDE.local.md
 .claude/settings.local.json
 .claude/agent-memory-local/
 .claude/worktrees/
+
+# downloaded by tools/cache_explorer/cache_explorer_gen.py on first use
+tools/cache_explorer/d3.v7.min.js

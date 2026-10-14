@@ -787,6 +787,7 @@ __wti_delete_page_instantiate(WT_SESSION_IMPL *session, WT_REF *ref)
             /* One tombstone for each row on the page. */
             WT_ROW_FOREACH (page, rip, i)
                 ++count;
+            WT_UNUSED(rip);
             break;
         }
         WT_ERR(__wt_calloc_def(session, count + 1, &update_list));

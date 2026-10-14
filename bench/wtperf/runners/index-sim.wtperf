@@ -1,0 +1,11 @@
+# wtperf options file: medium btree configuration
+conn_config="cache_size=1G,checkpoint=(wait=5)"
+table_config="type=file,leaf_page_max=32k"
+key_sz=12
+random_range=100m
+value_sz=4
+icount=0
+report_interval=5
+run_time=120
+populate_threads=1
+threads=((count=4,inserts=1))

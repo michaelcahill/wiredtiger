@@ -1,5 +1,6 @@
 aggregated_time_windows
 backup
+cache_log
 checkpoint
 checkpoint_cleanup
 compression

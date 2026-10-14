@@ -1263,6 +1263,44 @@ wiredtiger_open_statistics_log_configuration = [
         ])
 ]
 
+# wiredtiger_open and WT_CONNECTION.reconfigure cache log configurations.
+# Dumps the state of the cache to WiredTigerCache.<timestamp>.json files using cache cursors.
+cache_log_configuration_common = [
+    Config('json', 'true', r'''
+        encode the cache log in JSON format''',
+        type='boolean'),
+    Config('on_close', 'false', r'''log the cache state on database close''',
+        type='boolean'),
+    Config('sample', '10000', r'''
+        number of pages to sample per file when dumping the cache state; a value of 0
+        logs every page''',
+        min='0'),
+    Config('timestamp', '"%b %d %H:%M:%S"', r'''
+        a timestamp prepended to each log record. May contain \c strftime conversion specifications.
+        When \c json is configured, defaults to \c "%Y-%m-%dT%H:%M:%S.000Z"'''),
+    Config('wait', '5', r'''
+        seconds to wait between each write of the cache log; setting this value above 0
+        configures cache logging''',
+        min='0', max='100000'),
+    Config('path', '"."', r'''
+        the name of a directory into which cache log files are written. The directory
+        must already exist. If the value is not an absolute path, the path is relative to
+        the database home (see @ref absolute_path for more information)'''),
+]
+connection_reconfigure_cache_log_configuration = [
+    Config('cache_log', '', r'''
+        log the state of the cache to a file. Enabling the cache log server uses a session from
+        the configured session_max''',
+        type='category', subconfig=
+        cache_log_configuration_common)
+]
+wiredtiger_open_cache_log_configuration = [
+    Config('cache_log', '', r'''
+        log the state of the cache to a file. Enabling the cache log server uses a session from
+        the configured session_max''',
+        type='category', subconfig=cache_log_configuration_common)
+]
+
 wiredtiger_open_tiered_storage_configuration = [
     Config('tiered_storage', '', r'''
         Removed options, preserved to allow parsing old metadata''',
@@ -1377,6 +1415,7 @@ session_config = [
 
 wiredtiger_open_common =\
     connection_runtime_config +\
+    wiredtiger_open_cache_log_configuration +\
     wiredtiger_open_chunk_cache_configuration +\
     wiredtiger_open_compatibility_configuration +\
     wiredtiger_open_disaggregated_storage_configuration +\
@@ -1852,7 +1891,10 @@ methods = {
         to a non-zero value sets the number of samples the application expects to take
         using the \c next_random cursor. A cursor configured with both \c next_random and \c
         next_random_sample_size attempts to divide the object into \c next_random_sample_size
-        equal-sized pieces, and each retrieval returns a record from one of those pieces. See
+        equal-sized pieces, and each retrieval returns a record from one of those pieces. A
+        cache cursor opened on a single file uses \c next_random_sample_size on its own, to return
+        approximately that many of the file's pages that are in memory instead of every page;
+        \c next_random is not supported by cache cursors. See
         @ref cursor_random for details'''),
     Config('next_random_seed', '0', r'''
         configure the cursor to set an initial random seed when using \c next_random configuration.
@@ -2251,6 +2293,7 @@ methods = {
     connection_reconfigure_page_delta_configuration +\
     connection_reconfigure_log_configuration +\
     connection_reconfigure_statistics_log_configuration +\
+    connection_reconfigure_cache_log_configuration +\
     connection_runtime_config
 ),
 'WT_CONNECTION.set_file_system' : Method([]),

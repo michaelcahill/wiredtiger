@@ -98,6 +98,7 @@ store_prefix64(uint8_t *dst, uint64_t v)
     std::memcpy(dst, &v, sizeof(v));
 }
 
+#if defined(HAVE_BUILTIN_EXTENSION_LZ4) || defined(LZ4_EXTENSION)
 /*
  * store_prefix32 --
  *     Write a stored length the way the 32-bit-prefix compressors read it back.
@@ -110,6 +111,7 @@ store_prefix32(uint8_t *dst, uint32_t v)
 #endif
     std::memcpy(dst, &v, sizeof(v));
 }
+#endif
 
 std::vector<uint8_t>
 sample_data()
@@ -201,6 +203,7 @@ check_guard_64(const char *name, extension_init_t init)
     }
 }
 
+#if defined(HAVE_BUILTIN_EXTENSION_LZ4) || defined(LZ4_EXTENSION)
 /*
  * check_guard_32 --
  *     Exercise the compressors that store the compressed length as a 32-bit field. The addition
@@ -226,6 +229,7 @@ check_guard_32(const char *name, extension_init_t init, size_t prefix_size)
         REQUIRE(guard_rejected(f.compressor, f.session, bad, bad.size(), out));
     }
 }
+#endif
 
 } // namespace
 

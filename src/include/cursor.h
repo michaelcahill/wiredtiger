@@ -517,6 +517,36 @@ struct __wt_cursor_version {
     uint8_t flags;
 };
 
+/*
+ * WT_CURSOR_CACHE:
+ *     Cursor for iterating over files/pages in the database cache.
+ */
+struct __wt_cursor_cache {
+    WT_CURSOR iface;
+
+    /* State for file-summary mode (cache:). */
+    WT_DATA_HANDLE *dh_current; /* Current data handle being iterated */
+    bool done;                  /* True when iteration is exhausted */
+
+    /* Current row (both modes). */
+    char *current_key; /* Current key string (persisted across iterations) */
+
+    /* State for page-by-page mode (cache:file:<filename>). */
+    WT_BTREE *btree;  /* Btree handle pinned by __wt_session_get_btree_ckpt */
+    WT_REF *walk_ref; /* Current ref from tree walk */
+    char *file_uri;   /* The file URI being iterated */
+
+    /* State for sampled page-by-page mode (next_random_sample_size). */
+    uint64_t sample_size;    /* Pages to visit, 0 == every page in the tree */
+    uint64_t stride;         /* Pages walked between visits */
+    uint64_t offset;         /* Random phase within the stride */
+    uint64_t pages_seen;     /* Pages walked past in this pass */
+    uint64_t pages_returned; /* Rows returned in this pass */
+    WT_RAND_STATE rnd;       /* Seeded from next_random_seed */
+
+    bool notinitialized; /* True until first next() call */
+};
+
 #define WT_CURSOR_PRIMARY(cursor) (((WT_CURSOR_TABLE *)(cursor))->cg_cursors[0])
 
 #define WT_CURSOR_RECNO(cursor) WT_STREQ((cursor)->key_format, "r")

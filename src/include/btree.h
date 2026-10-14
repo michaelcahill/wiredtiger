@@ -95,6 +95,21 @@ typedef enum { /* Start position for eviction walk */
     WT_EVICT_WALK_RAND_PREV
 } WT_EVICT_WALK_TYPE;
 
+/* Reasons a page cannot be evicted, as returned by __wt_pagepin_reason. */
+typedef enum {
+    WT_PAGEPIN_NONE = 0,           /* Page can be evicted */
+    WT_PAGEPIN_PREFETCHED,         /* Page is in the prefetch queue */
+    WT_PAGEPIN_INTERNAL_SPLIT_GEN, /* Internal page with an active split generation */
+    WT_PAGEPIN_MATERIALIZATION,    /* Disaggregated storage materialization frontier not reached */
+    WT_PAGEPIN_UNCOMMITTED_TRUNCATE, /* Uncommitted fast-truncate on the page */
+    WT_PAGEPIN_OVERFLOW_KEYS, /* Internal overflow keys and btree syncing by other sessions */
+    WT_PAGEPIN_CHECKPOINT,    /* Dirty page while another session is checkpointing */
+    WT_PAGEPIN_DISAGG_DIRTY_INTERNAL, /* Dirty internal page in disaggregated storage */
+    WT_PAGEPIN_DISAGG_NEXT_CKPT,      /* Disaggregated page that belongs to the next checkpoint */
+    WT_PAGEPIN_METADATA_RECENT,       /* Clean metadata page with modifications not visible-all */
+    WT_PAGEPIN_ROOT                   /* Root page; ref->home is NULL and it cannot be evicted */
+} WT_PAGEPIN_REASON;
+
 /* An invalid btree file ID value. ID 0 is reserved for the metadata file. */
 #define WT_BTREE_ID_INVALID UINT32_MAX
 
